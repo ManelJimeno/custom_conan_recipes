@@ -1,0 +1,61 @@
+#
+# Create a python virtual environment
+#
+# Part of https://github.com/ManelJimeno/custom_conan_recipes (C) 2024
+#
+# Authors: Manel Jimeno <manel.jimeno@gmail.com>
+#
+# License: http://www.opensource.org/licenses/mit-license.php MIT
+#
+
+name: "Create a python virtual environment"
+inputs:
+  python_exe:
+    description: "Path to the Python executable"
+    required: true
+  pip_install_path:
+    description: "Path where pip install packages"
+    required: true
+  venv_path:
+    description: "Path to the virtual environment"
+    required: true
+  virtual:
+    description: "Whether to create and use a virtual environment (True/False)"
+    required: true
+    default: "True"
+  dependencies:
+    description: "Space-separated list of dependencies to install"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Create the virtual environment & install dependencies on Linux/MacOS
+      run: |
+        user_option="--user"
+        if [ "${{inputs.virtual}}" = "true" ]; then
+          user_option=" "
+          if [ $RUNNER_OS == 'Windows' ]; then
+            unix_path=$(echo "${{ inputs.venv_path  }}" | sed 's/\\/\//g')
+            ${{ inputs.python_exe }} -m venv $unix_path
+            "${unix_path}"/Scripts/activate
+          else
+            ${{ inputs.python_exe }} -m venv ${{ inputs.venv_path }}
+            source ${{ inputs.venv_path  }}/bin/activate
+          fi
+        else
+          if [ $RUNNER_OS == 'Linux' ] || [ $RUNNER_OS == 'macOS' ]; then
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            export PATH=$PATH:$HOME/.local/bin
+          elif [ $RUNNER_OS == 'Windows' ]; then
+            parent_directory=$(echo "${{ inputs.pip_install_path }}" | sed 's/\\/\//g')
+            echo "$parent_directory/Scripts" >> "$GITHUB_PATH"
+            export PATH=$PATH:"$parent_directory/Scripts"
+          fi
+        fi
+        if [ -n "${{ inputs.dependencies }}" ]; then
+          python -m pip install --upgrade pip
+          python -m pip install ${{ inputs.dependencies }} $user_option
+        fi
+      shell: bash

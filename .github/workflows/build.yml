@@ -1,0 +1,118 @@
+#
+# Build project
+#
+# Part of https://github.com/ManelJimeno/custom_conan_recipes (C) 2025
+#
+# Authors: Manel Jimeno <manel.jimeno@gmail.com>
+#
+# License: http://www.opensource.org/licenses/mit-license.php MIT
+#
+
+name: "Build project"
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+
+env:
+  venv_path: ${{ github.workspace }}/venv
+  build_dir: "build"
+  remote_server: "artifactory"
+
+jobs:
+  build:
+    env:
+      build_dir: "build"
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - { os: ubuntu-latest, venv: False, folder: "gstreamercpphelpers/all", version: "0.0.2", user: "custom", channel: "stable", build_type: "" }
+    runs-on: ${{matrix.config.os}}
+    steps:
+      - name: Download repo
+        uses: actions/checkout@v4
+      - name: Determine Python executable
+        shell: python
+        run: |
+          import os
+          import sys
+          import platform
+          python_exe = sys.executable
+          operating_system = platform.system()
+          profile = ""
+
+          if operating_system == "Windows":
+             pip_install_path = f"{os.environ['APPDATA']}\\Python\\Python{sys.version_info.major}{sys.version_info.minor}"
+             profile = "windows-x86_64"
+          elif operating_system == "Linux":
+            pip_install_path = "os.environ['HOME']}/.local/bin"
+            profile = "macos-silicon"
+          elif operating_system == "Darwin":
+            pip_install_path = f"{os.environ['HOME']}/Library/Python/{sys.version_info.major}.{sys.version_info.minor}/bin"
+            profile = "linux"
+
+          print("System python: ", sys.executable, sys.version, pip_install_path)
+          # Output the Python executable path to the environment file
+          with open(os.getenv('GITHUB_ENV'), 'a') as env_file:
+            env_file.write(f'python_exe={python_exe}\n')
+            env_file.write(f'pip_install_path={pip_install_path}\n')
+            env_file.write(f'conan_profile={profile}\n')
+      - name: Set up Python virtual environment and install dependencies
+        uses: ./.github/actions/create-venv
+        with:
+          python_exe: "${{ env.python_exe }}"
+          pip_install_path: "${{ env.pip_install_path }}"
+          venv_path: "${{ env.venv_path }}"
+          virtual: "${{ matrix.config.venv }}"
+          dependencies: "conan"
+      - name: Setup conan config
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          conan profile detect -f
+          conan remote add "${{ env.remote_server }}" "$ARTIFACTORY_ADDRESS"
+          conan remote login -p "$CONAN_PASSWORD" artifactory "$CONAN_USER"
+        env:
+          CONAN_PASSWORD: ${{ secrets.CONAN_PASSWORD }}
+          CONAN_USER: ${{ secrets.CONAN_USER }}
+          ARTIFACTORY_ADDRESS: ${{ secrets.ARTIFACTORY_ADDRESS }}
+      - name: Build recipes
+        shell: bash
+        run: |
+          if [ ! -z "${{ github.head_ref }}" ]; then
+            RECIPE_CHANNEL="${{ github.head_ref }}"
+          fi
+          BUILD_CMD="./.github/scripts/build_recipe.sh --folder \"$RECIPE_FOLDER\" --version \"$RECIPE_VERSION\" --remote $REMOTE_SERVER"
+          if [ ! -z "$RECIPE_USER" ]; then
+            BUILD_CMD="$BUILD_CMD --user \"$RECIPE_USER\""
+          fi
+          if [ ! -z "$RECIPE_CHANNEL" ]; then
+            BUILD_CMD="$BUILD_CMD --channel \"$RECIPE_CHANNEL\""
+          fi
+          if [ ! -z "$BUILD_TYPE" ]; then
+            for type in $BUILD_TYPE; do
+              BUILD_CMD="$BUILD_CMD --profile_host \"$PWD/profile/$CONAN_PROFILE_HOST-$type\" --profile_build \"$PWD/profile/$CONAN_PROFILE_BUILD\""
+            done
+          fi
+          echo $BUILD_CMD
+          eval "$BUILD_CMD"
+        env:
+          CONAN_PROFILE_HOST: "${{ env.conan_profile }}"
+          CONAN_PROFILE_BUILD: "${{ env.conan_profile }}-release"
+          RECIPE_FOLDER: "${{ matrix.config.folder }}"
+          RECIPE_VERSION: "${{ matrix.config.version }}"
+          RECIPE_USER: "${{ matrix.config.user }}"
+          RECIPE_CHANNEL: "${{ matrix.config.channel }}"
+          BUILD_TYPE: "${{ matrix.config.build_type }}"
+          REMOTE_SERVER: "${{ env.remote_server }}"
